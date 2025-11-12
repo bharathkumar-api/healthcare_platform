@@ -4,15 +4,23 @@ services:
   postgres:
     image: postgres:16
     container_name: healthcare-postgres
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
     networks:
       - healthcare-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   auth-service:
     build: ../auth-service
@@ -20,13 +28,17 @@ services:
     env_file:
       - .env
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: healthcare_auth
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${DB_AUTH}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
     networks:
@@ -35,31 +47,36 @@ services:
   patient-service:
     build: ../patient-service
     container_name: patient-service
+    env_file:
+      - .env
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: healthcare_patient
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${DB_PATIENT}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
       - "8001:8001"
     networks:
       - healthcare-net
 
-
   appointment-service:
     build: ../appointment-service
     container_name: appointment-service
+    env_file:
+      - .env
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: healthcare_appointment
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${DB_APPOINTMENT}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
       - "8003:8003"
     networks:
@@ -68,6 +85,17 @@ services:
   billing-service:
     build: ../billing-service
     container_name: billing-service
+    env_file:
+      - .env
+    environment:
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${DB_BILLING}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8004:8004"
     networks:
@@ -76,6 +104,8 @@ services:
   notification-service:
     build: ../notification-service
     container_name: notification-service
+    env_file:
+      - .env
     ports:
       - "8005:8005"
     networks:
@@ -84,6 +114,18 @@ services:
   gateway-service:
     build: ../gateway-service
     container_name: gateway-service
+    env_file:
+      - .env
+    environment:
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL}
+      PATIENT_SERVICE_URL: ${PATIENT_SERVICE_URL}
+      APPOINTMENT_SERVICE_URL: ${APPOINTMENT_SERVICE_URL}
+      BILLING_SERVICE_URL: ${BILLING_SERVICE_URL}
+      NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL}
+    depends_on:
+      - auth-service
+      - patient-service
+      - appointment-service
     ports:
       - "8090:8090"
     networks:

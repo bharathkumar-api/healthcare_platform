@@ -1,0 +1,1 @@
+-- Connect to appointment database

@@ -1,20 +1,32 @@
 from fastapi import FastAPI
-from .database import Base, engine
-from .routes import auth as auth_routes
-from .core.config import get_settings
+from fastapi.middleware.cors import CORSMiddleware
+from .database import engine, Base
+from .routes import auth
 
-settings = get_settings()
-
-# Create tables on startup (OK for dev; later use Alembic for prod)
+# Create database tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title=settings.PROJECT_NAME)
+app = FastAPI(
+    title="Healthcare Platform - Auth Service",
+    description="Authentication and Authorization Service",
+    version="1.0.0",
+    swagger_ui_parameters={
+        "persistAuthorization": True
+    }
+)
 
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/health", tags=["health"])
+# Include routers
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
+
+@app.get("/health")
 def health_check():
-    return {"status": "ok", "service": "auth-service"}
-
-
-app.include_router(auth_routes.router) 
-
+    return {"status": "healthy", "service": "auth-service"}
