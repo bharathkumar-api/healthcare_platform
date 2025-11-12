@@ -1,39 +1,22 @@
 # Auth Service
 
-The Auth Service is responsible for handling authentication and authorization within the healthcare platform. It implements JWT (JSON Web Tokens) and OAuth2 protocols to manage user roles and secure access to the various services.
-
-## Directory Structure
-
-```
-auth-service/
-├── src/
-│   ├── auth.py        # Authentication logic
-│   └── models.py      # Data models for user roles and authentication
-├── requirements.txt    # Dependencies for the auth service
-└── README.md           # Documentation for the auth service
-```
+FastAPI-based authentication service for the Healthcare Platform.
 
 ## Features
 
-- **JWT Authentication**: Securely authenticate users and issue tokens for session management.
-- **OAuth2 Support**: Integrate with third-party authentication providers.
-- **Role Management**: Define and manage user roles for access control.
+- User registration (patient/doctor/admin)
+- Login with email + password
+- JWT access tokens
+- `/auth/me` endpoint to fetch current user
+- `/health` for liveness checks
 
-## Getting Started
+## Local Run
 
-1. **Install Dependencies**: Run the following command to install the required packages:
-   ```
-   pip install -r requirements.txt
-   ```
-
-2. **Run the Service**: Start the authentication service using your preferred method (e.g., using a FastAPI server).
-
-3. **API Endpoints**: Refer to the `auth.py` file for available authentication endpoints and their usage.
-
-## Contributing
-
-Contributions are welcome! Please submit a pull request or open an issue for any enhancements or bug fixes.
-
-## License
-
-This project is licensed under the MIT License. See the LICENSE file for details.
+```bash
+cd auth-service
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+export DB_USER=postgres DB_PASSWORD=postgres DB_HOST=localhost DB_NAME=healthcare_auth
+export JWT_SECRET_KEY="CHANGE_ME"
+uvicorn src.main:app --reload
