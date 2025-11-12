@@ -1,0 +1,6 @@
+FastAPI
+uvicorn
+httpx
+pydantic
+python-multipart
+python-dotenv

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: ./gateway-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      - auth
+      - patient
+      - provider
+      - appointment
+      - billing
+      - notification
+
+  auth:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+
+  patient:
+    build:
+      context: ./patient-service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"
+
+  provider:
+    build:
+      context: ./provider-service
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8000"
+
+  appointment:
+    build:
+      context: ./appointment-service
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8000"
+
+  billing:
+    build:
+      context: ./billing-service
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8000"
+
+  notification:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    ports:
+      - "8006:8000"
+
+  ui:
+    build:
+      context: ./ui-service
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  db_data:
+    driver: local
