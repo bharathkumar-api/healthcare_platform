@@ -1,138 +1,101 @@
-version: "3.9"
-
 services:
   postgres:
-    image: postgres:16
+    image: postgres:15
     container_name: healthcare-postgres
-    env_file:
-      - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: healthcare
+      POSTGRES_PASSWORD: healthcare123
+      POSTGRES_DB: healthcare
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d
     networks:
-      - healthcare-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - healthcare-network
 
   auth-service:
     build: ../auth-service
-    container_name: auth-service
-    env_file:
-      - .env
+    container_name: healthcare-auth
     environment:
-      DB_HOST: ${POSTGRES_HOST}
-      DB_PORT: ${POSTGRES_PORT}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_NAME: ${DB_AUTH}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
-      JWT_ALGORITHM: ${JWT_ALGORITHM}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8000:8000"
-    networks:
-      - healthcare-net
-
-  patient-service:
-    build: ../patient-service
-    container_name: patient-service
-    env_file:
-      - .env
-    environment:
-      DB_HOST: ${POSTGRES_HOST}
-      DB_PORT: ${POSTGRES_PORT}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_NAME: ${DB_PATIENT}
-    depends_on:
-      postgres:
-        condition: service_healthy
+      DATABASE_URL: postgresql://healthcare:healthcare123@postgres:5432/healthcare
+      SECRET_KEY: your-secret-key-here-change-in-production-12345
     ports:
       - "8001:8001"
+    depends_on:
+      - postgres
     networks:
-      - healthcare-net
+      - healthcare-network
+    restart: unless-stopped
 
   appointment-service:
     build: ../appointment-service
-    container_name: appointment-service
-    env_file:
-      - .env
+    container_name: healthcare-appointments
     environment:
-      DB_HOST: ${POSTGRES_HOST}
-      DB_PORT: ${POSTGRES_PORT}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_NAME: ${DB_APPOINTMENT}
-    depends_on:
-      postgres:
-        condition: service_healthy
+      DATABASE_URL: postgresql://healthcare:healthcare123@postgres:5432/healthcare
+      SECRET_KEY: your-secret-key-here-change-in-production-12345
     ports:
       - "8003:8003"
-    networks:
-      - healthcare-net
-
-  billing-service:
-    build: ../billing-service
-    container_name: billing-service
-    env_file:
-      - .env
-    environment:
-      DB_HOST: ${POSTGRES_HOST}
-      DB_PORT: ${POSTGRES_PORT}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_NAME: ${DB_BILLING}
     depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8004:8004"
+      - postgres
     networks:
-      - healthcare-net
+      - healthcare-network
+    restart: unless-stopped
 
   notification-service:
     build: ../notification-service
-    container_name: notification-service
-    env_file:
-      - .env
+    container_name: healthcare-notifications
+    environment:
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      FROM_EMAIL: noreply@healthcare.local
     ports:
-      - "8005:8005"
+      - "8004:8004"
+    depends_on:
+      - mailhog
     networks:
-      - healthcare-net
+      - healthcare-network
+    restart: unless-stopped
 
   gateway-service:
     build: ../gateway-service
-    container_name: gateway-service
-    env_file:
-      - .env
+    container_name: healthcare-gateway
     environment:
-      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL}
-      PATIENT_SERVICE_URL: ${PATIENT_SERVICE_URL}
-      APPOINTMENT_SERVICE_URL: ${APPOINTMENT_SERVICE_URL}
-      BILLING_SERVICE_URL: ${BILLING_SERVICE_URL}
-      NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL}
-    depends_on:
-      - auth-service
-      - patient-service
-      - appointment-service
+      AUTH_SERVICE_URL: http://auth-service:8001
+      APPOINTMENT_SERVICE_URL: http://appointment-service:8003
+      NOTIFICATION_SERVICE_URL: http://notification-service:8004
     ports:
       - "8090:8090"
+    depends_on:
+      - auth-service
+      - appointment-service
+      - notification-service
     networks:
-      - healthcare-net
+      - healthcare-network
+    restart: unless-stopped
+
+  ui-service:
+    build: ../ui-service
+    container_name: healthcare-ui
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway-service
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: healthcare-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - healthcare-network
 
 networks:
-  healthcare-net:
+  healthcare-network:
+    driver: bridge
 
 volumes:
   postgres_data:
