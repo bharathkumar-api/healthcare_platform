@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional
@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import logging
 import json
+import asyncio
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ app.add_middleware(
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8001")
 APPOINTMENT_SERVICE_URL = os.getenv("APPOINTMENT_SERVICE_URL", "http://appointment-service:8003")
 PATIENT_SERVICE_URL = os.getenv("PATIENT_SERVICE_URL", "http://patient-service:8005")
+PROVIDER_SERVICE_URL = os.getenv("PROVIDER_SERVICE_URL", "http://provider-service:8006")
 BILLING_SERVICE_URL = os.getenv("BILLING_SERVICE_URL", "http://billing-service:8007")
 NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
 
@@ -43,6 +45,7 @@ SERVICE_ROUTES = {
     "auth": AUTH_SERVICE_URL,
     "appointments": APPOINTMENT_SERVICE_URL,
     "patients": PATIENT_SERVICE_URL,
+    "providers": PROVIDER_SERVICE_URL,
     "billing": BILLING_SERVICE_URL,
     "notifications": NOTIFICATION_SERVICE_URL,
 }
@@ -78,11 +81,10 @@ def check_rate_limit(client_ip: str) -> bool:
     rate_limit_store[client_ip].append(now)
     return True
 
-def verify_token(authorization: Optional[str]) -> Optional[dict]:
-    if not authorization:
+def verify_token(token: str) -> Optional[dict]:
+    if not token:
         return None
     try:
-        token = authorization.replace("Bearer ", "").strip()
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return {
             "user_id": payload.get("user_id"),
@@ -95,16 +97,33 @@ def verify_token(authorization: Optional[str]) -> Optional[dict]:
 
 def is_authorized(user: dict, path: str, method: str) -> bool:
     role = user.get("role", "").lower()
+    
+    # Admin has access to everything
     if role == "admin":
         return True
+    
+    # Allow all authenticated users to access notifications
+    if path.startswith("/api/v1/notifications"):
+        return True
+    
+    # Allow all authenticated users to access providers (read-only)
+    if path.startswith("/api/v1/providers") and method == "GET":
+        return True
+    
+    # Doctor permissions
     if role == "doctor":
-        if path.startswith("/api/v1/appointments") or path.startswith("/api/v1/patients"):
+        if path.startswith("/api/v1/appointments") or path.startswith("/api/v1/patients") or path.startswith("/api/v1/providers"):
             return True
+    
+    # Patient permissions
     if role == "patient":
         if path.startswith("/api/v1/appointments") or path.startswith("/api/v1/patients") or path.startswith("/api/v1/billing"):
             return True
+    
+    # Allow users to access their own auth endpoints
     if path.startswith("/api/v1/auth/me") or path.startswith("/api/v1/auth/logout"):
         return True
+    
     return False
 
 @app.middleware("http")
@@ -113,7 +132,6 @@ async def gateway_middleware(request: Request, call_next):
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     request.state.correlation_id = correlation_id
     
-    # IMPORTANT: Skip all checks for OPTIONS requests (CORS preflight)
     if request.method == "OPTIONS":
         response = Response(status_code=200)
         response.headers["Access-Control-Allow-Origin"] = "*"
@@ -123,7 +141,6 @@ async def gateway_middleware(request: Request, call_next):
         response.headers["X-Correlation-ID"] = correlation_id
         return response
     
-    # Rate limiting
     client_ip = request.client.host
     if not check_rate_limit(client_ip):
         duration = time.time() - start_time
@@ -134,13 +151,12 @@ async def gateway_middleware(request: Request, call_next):
             headers={"X-Correlation-ID": correlation_id}
         )
     
-    # Skip auth for public endpoints
     is_public = any(request.url.path.startswith(endpoint) for endpoint in PUBLIC_ENDPOINTS)
     
     user_id = None
     if not is_public:
         authorization = request.headers.get("authorization")
-        user = verify_token(authorization)
+        user = verify_token(authorization.replace("Bearer ", "") if authorization else "")
         
         if not user:
             duration = time.time() - start_time
@@ -204,6 +220,62 @@ async def proxy_request(request: Request, target_url: str):
         except httpx.RequestError as e:
             logger.error(f"Request error: {str(e)}")
             raise HTTPException(status_code=502, detail="Bad gateway")
+
+@app.websocket("/ws/notifications/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int, token: Optional[str] = None):
+    """Direct WebSocket connection to notification service"""
+    
+    if token:
+        user = verify_token(token)
+        if not user or user.get("user_id") != user_id:
+            await websocket.close(code=1008, reason="Unauthorized")
+            logger.warning(f"WebSocket auth failed for user {user_id}")
+            return
+    else:
+        logger.warning(f"No token provided for WebSocket connection user {user_id}")
+        await websocket.close(code=1008, reason="Token required")
+        return
+    
+    await websocket.accept()
+    logger.info(f"WebSocket accepted for user {user_id}")
+    
+    notification_ws_url = NOTIFICATION_SERVICE_URL.replace("http://", "ws://") + f"/ws/{user_id}"
+    
+    try:
+        import websockets
+        async with websockets.connect(notification_ws_url) as notification_ws:
+            logger.info(f"Connected to notification service for user {user_id}")
+            
+            async def receive_from_notification():
+                try:
+                    async for message in notification_ws:
+                        await websocket.send_text(message)
+                        logger.debug(f"Forwarded message to user {user_id}")
+                except Exception as e:
+                    logger.error(f"Error receiving from notification service: {str(e)}")
+            
+            async def receive_from_client():
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        await notification_ws.send(data)
+                        logger.debug(f"Forwarded message from user {user_id}")
+                except WebSocketDisconnect:
+                    logger.info(f"Client {user_id} disconnected")
+                except Exception as e:
+                    logger.error(f"Error receiving from client: {str(e)}")
+            
+            await asyncio.gather(
+                receive_from_notification(),
+                receive_from_client()
+            )
+    
+    except Exception as e:
+        logger.error(f"WebSocket error for user {user_id}: {str(e)}")
+        try:
+            await websocket.close(code=1011, reason="Internal error")
+        except:
+            pass
 
 @app.get("/health")
 async def health_check():
