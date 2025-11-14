@@ -12,6 +12,10 @@ __pycache__/
 venv/
 env/
 ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
 
 # Database
 *.db
@@ -20,8 +24,30 @@ ENV/
 # Docker
 *.log
 
+# Node / Frontend
+node_modules/
+**/node_modules/
+*.tsbuildinfo
+*.eslintcache
+npm-debug.log*
+yarn-error.log*
+/ui-service/build/
+/ui-service/.parcel-cache/
+/ui-service/.next/
+
+# Build artifacts
+dist/
+build/
+coverage/
+
+# OS
+.DS_Store
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Misc local scripts / transcripts
+infra/typescript
