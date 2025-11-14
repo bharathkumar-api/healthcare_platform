@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Optional, List
@@ -8,6 +8,8 @@ from email.mime.multipart import MIMEMultipart
 import os
 import json
 import logging
+import time
+from uuid import uuid4
 from datetime import datetime
 
 # Configure logging
@@ -15,7 +17,8 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+SERVICE_NAME = "notification-service"
+logger = logging.getLogger(SERVICE_NAME)
 
 app = FastAPI(title="Notification Service", version="1.0.0")
 
@@ -27,6 +30,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Consistency layer for HTTP logging (WebSockets handled separately)."""
+    start = time.perf_counter()
+    correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
+    request.state.correlation_id = correlation_id
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration = (time.perf_counter() - start) * 1000
+        error_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": SERVICE_NAME,
+            "method": request.method,
+            "path": request.url.path,
+            "status": 500,
+            "duration_ms": round(duration, 2),
+            "correlation_id": correlation_id,
+            "error": str(exc)
+        }
+        logger.exception(json.dumps(error_entry))
+        raise
+
+    duration = (time.perf_counter() - start) * 1000
+    log_entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "service": SERVICE_NAME,
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "duration_ms": round(duration, 2),
+        "correlation_id": correlation_id
+    }
+
+    if response.status_code >= 500:
+        logger.error(json.dumps(log_entry))
+    elif response.status_code >= 400:
+        logger.warning(json.dumps(log_entry))
+    else:
+        logger.info(json.dumps(log_entry))
+
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
 
 # Store active WebSocket connections
 active_connections: Dict[int, List[WebSocket]] = {}

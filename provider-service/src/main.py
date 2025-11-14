@@ -1,27 +1,28 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, Query
+# filepath: /Users/bharathkumarveeramalli/healthcare_platform-2/provider-service/src/main.py
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import datetime
+from src.api.routes import router
+from src.database.session import engine
+from src.models import provider
+from src.database.seed import seed_providers
+from src.database.session import get_db
 import logging
 import json
+import time
+from uuid import uuid4
+from datetime import datetime
 
-from .database import engine, get_db, Base
-from .models import Provider, ProviderSchedule, ProviderReview
-from .schemas import (
-    ProviderCreate, ProviderResponse, ProviderUpdate, ProviderDetailResponse,
-    ProviderScheduleCreate, ProviderScheduleResponse,
-    ProviderReviewCreate, ProviderReviewResponse,
-    ProviderSearchResponse
-)
+SERVICE_NAME = "provider-service"
 
-Base.metadata.create_all(bind=engine)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(SERVICE_NAME)
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
-logger = logging.getLogger(__name__)
+# Create tables
+provider.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Provider Service", version="1.0.0")
+app = FastAPI(title="Healthcare Provider Service", version="1.0.0")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,96 +31,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def log_action(correlation_id: str, action: str, user_id: Optional[int], details: dict):
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Structured logging for provider endpoints."""
+    start = time.perf_counter()
+    correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
+    request.state.correlation_id = correlation_id
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration = (time.perf_counter() - start) * 1000
+        error_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": SERVICE_NAME,
+            "method": request.method,
+            "path": request.url.path,
+            "status": 500,
+            "duration_ms": round(duration, 2),
+            "correlation_id": correlation_id,
+            "error": str(exc)
+        }
+        logger.exception(json.dumps(error_entry))
+        raise
+
+    duration = (time.perf_counter() - start) * 1000
     log_entry = {
         "timestamp": datetime.utcnow().isoformat(),
-        "correlation_id": correlation_id,
-        "service": "provider-service",
-        "action": action,
-        "user_id": user_id,
-        "details": details
+        "service": SERVICE_NAME,
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "duration_ms": round(duration, 2),
+        "correlation_id": correlation_id
     }
-    logger.info(json.dumps(log_entry))
 
-def get_current_user(
-    x_user_id: Optional[str] = Header(None),
-    x_user_role: Optional[str] = Header(None),
-    x_correlation_id: Optional[str] = Header(None)
-):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    return {
-        "user_id": int(x_user_id),
-        "role": x_user_role or "patient",
-        "correlation_id": x_correlation_id or "unknown"
-    }
+    if response.status_code >= 500:
+        logger.error(json.dumps(log_entry))
+    elif response.status_code >= 400:
+        logger.warning(json.dumps(log_entry))
+    else:
+        logger.info(json.dumps(log_entry))
+
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
+# Include routes
+app.include_router(router, prefix="/api/v1")
+
+@app.on_event("startup")
+async def startup_event():
+    """Seed database on startup"""
+    logger.info("🚀 Starting Provider Service...")
+    try:
+        db = next(get_db())
+        seed_providers(db)
+        logger.info("✅ Provider Service ready!")
+    except Exception as e:
+        logger.error(f"❌ Error during startup: {e}")
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "provider-service"}
-
-@app.post("/api/v1/providers/", response_model=ProviderResponse, status_code=201)
-def create_provider_profile(
-    provider: ProviderCreate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    user_id = current_user["user_id"]
-    role = current_user["role"]
-    
-    if role not in ["doctor", "admin"]:
-        raise HTTPException(status_code=403, detail="Only doctors can create provider profiles")
-    
-    existing = db.query(Provider).filter(Provider.user_id == user_id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Provider profile already exists")
-    
-    db_provider = Provider(user_id=user_id, **provider.dict())
-    db.add(db_provider)
-    db.commit()
-    db.refresh(db_provider)
-    
-    log_action(current_user["correlation_id"], "create_provider_profile", user_id, {"provider_id": db_provider.id})
-    return db_provider
-
-@app.get("/api/v1/providers/", response_model=ProviderSearchResponse)
-def search_providers(
-    specialty: Optional[str] = Query(None),
-    min_rating: Optional[float] = Query(None),
-    available_only: bool = Query(True),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    query = db.query(Provider)
-    
-    if specialty:
-        query = query.filter(Provider.specialty.ilike(f"%{specialty}%"))
-    
-    if min_rating:
-        query = query.filter(Provider.rating >= min_rating)
-    
-    if available_only:
-        query = query.filter(Provider.is_available == True)
-    
-    total = query.count()
-    providers = query.order_by(Provider.rating.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    
-    log_action(current_user["correlation_id"], "search_providers", current_user["user_id"], {
-        "specialty": specialty, "total_found": total
-    })
-    
-    return {"providers": providers, "total": total, "page": page, "page_size": page_size}
-
-@app.get("/api/v1/providers/{provider_id}", response_model=ProviderDetailResponse)
-def get_provider(
-    provider_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    provider = db.query(Provider).filter(Provider.id == provider_id).first()
-    if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    return provider
+    return {
+        "status": "healthy",
+        "service": "provider-service",
+        "version": "1.0.0"
+    }

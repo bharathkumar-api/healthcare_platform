@@ -30,7 +30,7 @@ app.add_middleware(
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8001")
 APPOINTMENT_SERVICE_URL = os.getenv("APPOINTMENT_SERVICE_URL", "http://appointment-service:8003")
 PATIENT_SERVICE_URL = os.getenv("PATIENT_SERVICE_URL", "http://patient-service:8005")
-PROVIDER_SERVICE_URL = os.getenv("PROVIDER_SERVICE_URL", "http://provider-service:8006")
+PROVIDER_SERVICE_URL = os.getenv("PROVIDER_SERVICE_URL", "http://provider-service:8004")
 BILLING_SERVICE_URL = os.getenv("BILLING_SERVICE_URL", "http://billing-service:8007")
 NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
 
@@ -304,9 +304,11 @@ async def route_service(request: Request, service: str, path: str = ""):
     if not service_url:
         raise HTTPException(status_code=404, detail=f"Service '{service}' not found")
     
+    # Build target URL correctly
     if path:
-        target_url = f"{service_url}/api/v1/{service}/{path}"
+        target_url = f"{service_url}/api/v1/{path}"
     else:
+        # When path is empty, just append the service endpoint root
         target_url = f"{service_url}/api/v1/{service}/"
     
     return await proxy_request(request, target_url)

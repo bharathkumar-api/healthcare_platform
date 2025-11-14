@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Providers from './pages/Providers';
 import './App.css';
 
 const API_URL = 'http://localhost:8090';
@@ -185,10 +186,11 @@ function App() {
           {error && <div className="error-message">{error}</div>}
           
           {activeTab === 'dashboard' && <Dashboard token={token} user={user} />}
+          {activeTab === 'providers' && <Providers token={token} />}
+          {activeTab === 'records' && <MedicalRecords token={token} />}
+          {activeTab === 'notifications' && <NotificationsList token={token} />}
           {activeTab === 'profile' && <PatientProfile token={token} />}
           {activeTab === 'appointments' && <Appointments token={token} />}
-          {activeTab === 'providers' && <Providers token={token} />}
-          {activeTab === 'notifications' && <NotificationsList notifications={notifications} token={token} user={user} />}
         </main>
       </div>
     </div>
@@ -864,80 +866,6 @@ function Appointments({ token }) {
           ))
         )}
       </div>
-    </div>
-  );
-}
-
-function Providers({ token }) {
-  const [providers, setProviders] = useState([]);
-  const [specialty, setSpecialty] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  const searchProviders = async () => {
-    setLoading(true);
-    try {
-      console.log('Searching providers with specialty:', specialty);
-      const url = specialty 
-        ? `${API_URL}/api/v1/providers/?specialty=${specialty}`
-        : `${API_URL}/api/v1/providers/`;
-      
-      const response = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      console.log('Providers loaded:', data.providers?.length || 0);
-      setProviders(data.providers || []);
-    } catch (error) {
-      console.error('Error fetching providers:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    searchProviders();
-  }, []);
-
-  return (
-    <div className="providers">
-      <h2>Find Healthcare Providers</h2>
-
-      <div className="search-box">
-        <select
-          value={specialty}
-          onChange={(e) => setSpecialty(e.target.value)}
-        >
-          <option value="">All Specialties</option>
-          <option value="Cardiology">Cardiology</option>
-          <option value="Dermatology">Dermatology</option>
-          <option value="Neurology">Neurology</option>
-          <option value="Pediatrics">Pediatrics</option>
-          <option value="Orthopedics">Orthopedics</option>
-        </select>
-        <button className="btn-primary" onClick={searchProviders}>Search</button>
-      </div>
-
-      {loading ? (
-        <div className="loading">Loading providers...</div>
-      ) : (
-        <div className="providers-list">
-          {providers.length === 0 ? (
-            <p className="no-data">No providers found. Try a different specialty.</p>
-          ) : (
-            providers.map((provider) => (
-              <div key={provider.id} className="provider-card">
-                <h3>{provider.first_name} {provider.last_name}</h3>
-                <p><strong>Specialty:</strong> {provider.specialty}</p>
-                <p><strong>License:</strong> {provider.license_number}</p>
-                <p><strong>Experience:</strong> {provider.years_of_experience} years</p>
-                <p><strong>Rating:</strong> ⭐ {provider.rating.toFixed(1)} ({provider.total_reviews} reviews)</p>
-                <p><strong>Consultation Fee:</strong> ${provider.consultation_fee}</p>
-                {provider.is_available && <span className="available-badge">Available</span>}
-              </div>
-            ))
-          )}
-        </div>
-      )}
     </div>
   );
 }
